@@ -285,7 +285,8 @@ export default function FriendsPage() {
           </section>
         )}
 
-                <   Link
+                <   
+                    Link
           href="/discover"
           className="block rounded-2xl border border-neutral-800 bg-neutral-900 p-5 hover:border-emerald-500 transition"
         >

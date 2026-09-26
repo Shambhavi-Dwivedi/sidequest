@@ -5,6 +5,8 @@ export type Challenge = {
   description: string;
   type: "solo" | "duo" | "circle";
   points: number;
+  proof: "photo" | "partner"; // photo = AI checks it, partner = a friend confirms
+  aiCheck?: string;           // what the photo should show (for the AI)
 };
 
 export const CHALLENGES: Challenge[] = [
@@ -16,6 +18,8 @@ export const CHALLENGES: Challenge[] = [
       "Visit a café with a friend. Each of you ask the barista for a recommendation, then order it for the other person.",
     type: "duo",
     points: 20,
+    proof: "photo",
+    aiCheck: "two drinks (coffee, tea, smoothies, etc.) at a café or on a table",
   },
   {
     id: "compliment-chain",
@@ -25,6 +29,7 @@ export const CHALLENGES: Challenge[] = [
       "Give 3 genuine compliments today: one to a friend, one to a classmate or coworker, and one to a stranger.",
     type: "solo",
     points: 20,
+    proof: "partner",
   },
   {
     id: "ask-a-local",
@@ -34,6 +39,7 @@ export const CHALLENGES: Challenge[] = [
       "Ask someone you don't know (a librarian, shop owner, barista) for a recommendation, and write down what they said.",
     type: "solo",
     points: 25,
+    proof: "partner",
   },
   {
     id: "duo-snap",
@@ -43,6 +49,8 @@ export const CHALLENGES: Challenge[] = [
       "You and a circle friend both post a photo of what you're doing right now. Places and things only, no strangers.",
     type: "duo",
     points: 15,
+    proof: "photo",
+    aiCheck: "a real, recently taken photo of a place or activity (not a screenshot, meme, or stock image)",
   },
   {
     id: "scavenger-snap",
@@ -52,6 +60,8 @@ export const CHALLENGES: Challenge[] = [
       "Find and photograph: a dog, a mural, something older than you, a handwritten sign, and something purple.",
     type: "circle",
     points: 30,
+    proof: "photo",
+    aiCheck: "at least one of: a dog, a mural, a handwritten sign, something purple, or something clearly old or vintage",
   },
   {
     id: "skill-swap",
@@ -61,6 +71,7 @@ export const CHALLENGES: Challenge[] = [
       "Teach a friend something in 15 minutes: a card trick, a phrase in another language, a recipe step. Then swap.",
     type: "duo",
     points: 25,
+    proof: "partner",
   },
   {
     id: "good-deed-duo",
@@ -70,6 +81,8 @@ export const CHALLENGES: Challenge[] = [
       "Do something kind together: pick up litter for 15 minutes, leave an encouraging note, or help a neighbor.",
     type: "duo",
     points: 30,
+    proof: "photo",
+    aiCheck: "evidence of a good deed, such as a bag of collected litter, a handwritten kind note, or helping with a chore",
   },
 ];
 
