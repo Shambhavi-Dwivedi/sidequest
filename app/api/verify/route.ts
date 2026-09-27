@@ -40,7 +40,7 @@ export async function POST(req: Request) {
   try {
     const { text, provider } = await askAI({
       instructions:
-        "You check photo proof for SideQuest, a friendly app where friends do small real-life challenges. " +
+        "You check photo proof for ConQuest, a friendly app where friends do small real-life challenges. " +
         "Be encouraging and fairly lenient. Judge only what is visible in the photo.",
       prompt:
         `Quest: "${title}". The photo should show: ${aiCheck}.\n` +

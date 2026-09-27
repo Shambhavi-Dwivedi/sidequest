@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { LoadingScreen } from "@/components/ui";
 
 export default function JoinPage() {
   const { code } = useParams<{ code: string }>();
@@ -19,9 +20,5 @@ export default function JoinPage() {
     });
   }, [code, router]);
 
-  return (
-    <main className="min-h-screen bg-neutral-950 text-white flex items-center justify-center px-6 text-center">
-      <p className="text-neutral-400">Joining your friend's circle…</p>
-    </main>
-  );
+  return <LoadingScreen label="Joining your friend's circle…" theme="theme-friends" />;
 }

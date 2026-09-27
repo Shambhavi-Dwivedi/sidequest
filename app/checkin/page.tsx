@@ -1,26 +1,38 @@
 "use client";
 
-import { useEffect, useRef, useState, ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase";
-import { CHALLENGES, challengeOfTheDay, Challenge } from "@/lib/challenges";
+import { CHALLENGES, challengeOfTheDay, type Challenge } from "@/lib/challenges";
 import { todayString, weeklyPoints, WEEKLY_CAP, DUO_BONUS } from "@/lib/points";
-import Countdown from "@/components/Countdown";
 import { nextMidnight } from "@/lib/time";
-
-
+import Countdown from "@/components/Countdown";
+import {
+  AccentTitle,
+  AppShell,
+  ErrorText,
+  FieldLabel,
+  Icon,
+  LoadingScreen,
+  PrimaryButton,
+  PrimaryLink,
+  ScreenHeading,
+  inputClass,
+  secondaryButtonClass,
+} from "@/components/ui";
 
 type Friend = { id: string; name: string };
 type Verdict = { verified: boolean; feedback: string; hasFaces: boolean };
 type Step = "loading" | "form" | "checking" | "retry" | "done";
 
+// Figma: DebriefScreen ("Share the adventure")
 export default function CheckInPage() {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [challenge, setChallenge] = useState<Challenge>(challengeOfTheDay());
-  const [dueAt, setDueAt] = useState<string | null>(null);
   const [missionId, setMissionId] = useState<string | null>(null);
+  const [dueAt, setDueAt] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [circleId, setCircleId] = useState<string | null>(null);
   const [friends, setFriends] = useState<Friend[]>([]);
@@ -88,10 +100,7 @@ export default function CheckInPage() {
         .maybeSingle();
       if (membership) {
         setCircleId(membership.circle_id);
-        const { data: rows } = await supabase
-          .from("circle_members")
-          .select("user_id")
-          .eq("circle_id", membership.circle_id);
+        const { data: rows } = await supabase.from("circle_members").select("user_id").eq("circle_id", membership.circle_id);
         (rows ?? []).forEach((r) => ids.add(r.user_id));
       }
       const { data: fs } = await supabase
@@ -143,7 +152,7 @@ export default function CheckInPage() {
   // mode "ai": the AI checks the photo. mode "friend": a friend confirms instead.
   async function submit(mode: "ai" | "friend") {
     if (!userId) return;
-        if (dueAt && new Date(dueAt).getTime() <= Date.now()) {
+    if (dueAt && new Date(dueAt).getTime() <= Date.now()) {
       return setError("Time's up on this quest! Plan a new one with your friend.");
     }
     if (mode === "ai" && !photo) return setError("Add a photo so the AI can check it");
@@ -161,9 +170,7 @@ export default function CheckInPage() {
         const res = await fetch("/api/verify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(
-            missionId ? { imageUrl: photoUrl, missionId } : { imageUrl: photoUrl, challengeId: challenge.id }
-          ),
+          body: JSON.stringify(missionId ? { imageUrl: photoUrl, missionId } : { imageUrl: photoUrl, challengeId: challenge.id }),
         });
         const data = await res.json();
 
@@ -232,14 +239,12 @@ export default function CheckInPage() {
   }
 
   const partnerName = friends.find((f) => f.id === partnerId)?.name;
-  const input =
-    "w-full rounded-xl bg-neutral-900 border border-neutral-800 px-4 py-3 outline-none focus:border-emerald-500";
 
   const friendPicker = (label: string) =>
     friends.length > 0 ? (
-      <section>
-        <h2 className="font-semibold mb-2">{label}</h2>
-        <select value={partnerId} onChange={(e) => setPartnerId(e.target.value)} className={input}>
+      <label className="block">
+        <FieldLabel>{label}</FieldLabel>
+        <select value={partnerId} onChange={(e) => setPartnerId(e.target.value)} className={inputClass}>
           <option value="">{challenge.proof === "partner" ? "Choose a friend…" : "No one, I did it solo"}</option>
           {friends.map((f) => (
             <option key={f.id} value={f.id}>
@@ -247,11 +252,11 @@ export default function CheckInPage() {
             </option>
           ))}
         </select>
-      </section>
+      </label>
     ) : (
-      <p className="text-sm text-neutral-500">
+      <p className="text-sm">
         Add friends so they can confirm your quests.{" "}
-        <Link href="/friends" className="text-emerald-400 underline">
+        <Link href="/friends" className="font-bold underline decoration-quest-pink decoration-2 underline-offset-4">
           Find friends
         </Link>
       </p>
@@ -259,177 +264,208 @@ export default function CheckInPage() {
 
   // ---------- Screens ----------
 
-  if (step === "loading") {
-    return (
-      <main className="min-h-screen bg-neutral-950 text-white flex items-center justify-center">
-        <p className="text-neutral-400">Loading…</p>
-      </main>
-    );
-  }
-
-  if (step === "checking") {
-    return (
-      <main className="min-h-screen bg-neutral-950 text-white flex flex-col items-center justify-center gap-3 px-6 text-center">
-        <p className="text-5xl animate-bounce">🤖</p>
-        <p className="text-neutral-300">{photo ? "Checking your photo…" : "Saving your check-in…"}</p>
-      </main>
-    );
-  }
+  if (step === "loading") return <LoadingScreen />;
+  if (step === "checking") return <LoadingScreen label={photo ? "Checking your photo…" : "Saving your check-in…"} />;
 
   if (step === "done") {
     return (
-      <main className="min-h-screen bg-neutral-950 text-white px-6 py-10">
-        <div className="max-w-md mx-auto space-y-6 text-center">
-          {verifiedNow ? (
-            <>
-              <p className="text-6xl">🎉</p>
-              <h1 className="text-4xl font-bold text-emerald-400">+{earned} pts</h1>
-              {verdict?.feedback && <p className="text-neutral-300">“{verdict.feedback}”</p>}
-              {capped && <p className="text-amber-400 text-sm">🏆 You've hit this week's 100-point max!</p>}
-              {partnerName && (
-                <p className="text-sm text-neutral-400">
-                  When {partnerName} confirms you did it together, you'll get +{DUO_BONUS} duo bonus.
-                </p>
-              )}
-            </>
-          ) : (
-            <>
-              <p className="text-6xl">⏳</p>
-              <h1 className="text-2xl font-bold">Sent to {partnerName} to confirm</h1>
-              <p className="text-neutral-400">You'll get +{challenge.points + DUO_BONUS} pts when they confirm.</p>
-            </>
-          )}
+      <AppShell theme="theme-streak">
+        <section className="mx-auto max-w-[640px]">
+          <div className="panel-3d p-7 text-center sm:p-10">
+            {verifiedNow ? (
+              <>
+                <span className="mx-auto grid h-20 w-20 place-items-center rounded-full border-2 border-black bg-success shadow-[4px_4px_0_#000]">
+                  <Icon name="check" className="h-10 w-10" />
+                </span>
+                <p className="mt-6 font-mono text-xs font-bold uppercase tracking-[.18em]">Mission accomplished</p>
+                <h1 className="map-title mt-2 font-display text-6xl">
+                  +<span className="title-accent">{earned}</span> pts
+                </h1>
+                {verdict?.feedback && <p className="mx-auto mt-4 max-w-[440px] text-base leading-7">“{verdict.feedback}”</p>}
+                {capped && (
+                  <p className="mx-auto mt-4 inline-block rounded-full border-2 border-black bg-progress px-4 py-2 text-sm font-bold">
+                    🏆 You&apos;ve hit this week&apos;s {WEEKLY_CAP}-point max!
+                  </p>
+                )}
+                {partnerName && (
+                  <p className="mt-4 text-sm">
+                    When {partnerName} confirms you did it together, you&apos;ll get +{DUO_BONUS} duo bonus.
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <span className="mx-auto grid h-20 w-20 place-items-center rounded-full border-2 border-black bg-progress shadow-[4px_4px_0_#000]">
+                  <Icon name="clock" className="h-10 w-10" />
+                </span>
+                <h1 className="map-title mt-6 font-display text-4xl">
+                  Sent to <span className="title-accent">{partnerName}</span>
+                </h1>
+                <p className="mt-3 text-base">You&apos;ll get +{challenge.points + DUO_BONUS} pts when they confirm.</p>
+              </>
+            )}
 
-          {partnerName && (
-            <Link href="/missions" className="block rounded-xl bg-emerald-500 text-black font-semibold py-3">
-              ✨ Plan your next quest with {partnerName}
-            </Link>
-          )}
-          <Link href="/home" className="block rounded-xl border border-neutral-700 font-semibold py-3">
-            Back home
-          </Link>
-        </div>
-      </main>
+            <div className="mt-8 grid gap-3">
+              {partnerName && (
+                <PrimaryLink href="/missions" className="w-full">
+                  Plan your next quest with {partnerName}
+                </PrimaryLink>
+              )}
+              <Link href="/home" className={`${secondaryButtonClass} w-full`}>
+                Back home
+              </Link>
+            </div>
+          </div>
+        </section>
+      </AppShell>
     );
   }
 
   return (
-    <main className="min-h-screen bg-neutral-950 text-white px-6 py-10">
-      <div className="max-w-md mx-auto space-y-6">
-        <Link href={missionId ? "/missions" : "/home"} className="text-sm text-neutral-400 underline">
-          ← Back
+    <AppShell theme="theme-streak">
+      <section className="mx-auto max-w-[1180px]">
+        <Link href={missionId ? "/missions" : "/home"} className="mb-6 inline-flex items-center gap-2 text-xs font-bold uppercase tracking-[.15em]">
+          <Icon name="chevron" className="h-4 w-4 rotate-180" />
+          Back
         </Link>
+        <ScreenHeading
+          number="04"
+          eyebrow={missionId ? "AI mission · Quest log" : "Quest log"}
+          title="Share the adventure"
+          copy="Post your proof, say how it went, and keep your streak moving. ConQuest uses what you both write to plan your next quest."
+        />
 
-        <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/5 p-5 space-y-2">
-          <p className="text-xs uppercase tracking-wide text-emerald-400 font-semibold">
-            {missionId ? "AI mission" : challenge.type} · +{challenge.points} pts
-          </p>
-          <h1 className="text-2xl font-bold">
-            {challenge.emoji} {challenge.title}
-          </h1>
-          <p className="text-neutral-300">{challenge.description}</p>
-          <p className="text-xs text-neutral-500">
-            {challenge.proof === "photo" ? "🤖 Proof: AI checks your photo" : "🤝 Proof: a friend confirms"}
-          </p>
-                    <p className="text-xs text-amber-300">
-            ⏱{" "}
-            {missionId ? (
-              dueAt ? (
-                <>Time left: <Countdown to={dueAt} expiredText="expired" /></>
-              ) : (
-                "No deadline"
-              )
-            ) : (
-              <>Ends in <Countdown to={nextMidnight()} expiredText="any second now" /></>
-            )}
-          </p>
-        </div>
+        <div className="mt-8 grid gap-6 lg:grid-cols-[1.15fr_.85fr]">
+          {/* Form */}
+          <div className="panel-3d">
+            <div className="flex items-center justify-between border-b-2 border-black px-6 py-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[.15em]">Check in</p>
+                <p className="mt-1 text-xs text-black">Visible only to your circle</p>
+              </div>
+              <span className="flex items-center gap-2 rounded-full border-2 border-black bg-white px-3 py-2 text-xs font-bold">
+                <Icon name={challenge.proof === "photo" ? "camera" : "people"} className="h-4 w-4" />
+                {challenge.proof === "photo" ? "AI checks photo" : "Friend confirms"}
+              </span>
+            </div>
 
-        {alreadyToday && (
-          <p className="text-sm text-amber-400">You already checked in for this today. Submitting again replaces it.</p>
-        )}
+            <div className="grid gap-5 p-4 sm:p-6">
+              {alreadyToday && (
+                <p className="rounded-2xl border-2 border-black bg-progress px-4 py-3 text-sm font-bold">
+                  You already checked in for this today. Submitting again replaces it.
+                </p>
+              )}
 
-        {/* AI said no, or the AI was unavailable */}
-        {step === "retry" && (
-          <div className="rounded-2xl border border-amber-500/40 bg-amber-500/5 p-4 space-y-3">
-            <p className="font-semibold">🤔 Not quite yet</p>
-            <p className="text-neutral-300 text-sm">{verdict?.feedback ?? error}</p>
-            <button onClick={retake} className="w-full rounded-xl bg-neutral-800 font-semibold py-3">
-              Retake photo
-            </button>
-            {friends.length > 0 && (
-              <>
-                {friendPicker("Or have a friend vouch for you")}
-                <button
-                  onClick={() => submit("friend")}
-                  className="w-full rounded-xl border border-neutral-700 font-semibold py-3"
-                >
-                  Ask a friend to confirm instead
-                </button>
-              </>
-            )}
+              {/* AI said no, or the AI was unavailable */}
+              {step === "retry" && (
+                <div className="rounded-[24px] border-2 border-black bg-progress p-5">
+                  <p className="font-display text-xl">Not quite yet</p>
+                  <p className="mt-2 text-sm leading-6">{verdict?.feedback ?? error}</p>
+                  <button type="button" onClick={retake} className={`${secondaryButtonClass} mt-4 w-full`}>
+                    <Icon name="camera" className="h-4 w-4" />
+                    Retake photo
+                  </button>
+                  {friends.length > 0 && (
+                    <div className="mt-4 grid gap-3">
+                      {friendPicker("Or have a friend vouch for you")}
+                      <PrimaryButton onClick={() => submit("friend")} className="w-full">
+                        Ask a friend to confirm instead
+                      </PrimaryButton>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {step === "form" && (
+                <>
+                  <div>
+                    <FieldLabel>{challenge.proof === "photo" ? "Photo proof" : "Photo (optional)"}</FieldLabel>
+                    <button
+                      type="button"
+                      onClick={() => fileRef.current?.click()}
+                      className="relative grid aspect-[4/3] w-full place-items-center overflow-hidden rounded-[28px] border-2 border-dashed border-black bg-white"
+                    >
+                      {preview ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={preview} alt="Your photo" className="absolute inset-0 h-full w-full object-cover" />
+                      ) : (
+                        <span className="flex flex-col items-center gap-3">
+                          <span className="grid h-14 w-14 place-items-center rounded-full border-2 border-black bg-discovery">
+                            <Icon name="camera" className="h-7 w-7" />
+                          </span>
+                          <span className="text-sm font-bold">Tap to take a photo</span>
+                        </span>
+                      )}
+                    </button>
+                    <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={pickPhoto} className="hidden" />
+                    <p className="mt-2 text-xs font-semibold">Places and things, please. No strangers&apos; faces.</p>
+                  </div>
+
+                  <label className="block">
+                    <FieldLabel>How did it go?</FieldLabel>
+                    <textarea
+                      value={reflection}
+                      onChange={(e) => setReflection(e.target.value.slice(0, 200))}
+                      placeholder="One sentence. The barista recommended a lavender latte and it was amazing."
+                      rows={3}
+                      className={`${inputClass} resize-none`}
+                    />
+                  </label>
+
+                  {friendPicker(
+                    challenge.proof === "partner"
+                      ? "Who can confirm you did it?"
+                      : `Did it with a friend? (+${DUO_BONUS} duo bonus when they confirm)`
+                  )}
+
+                  <ErrorText>{error}</ErrorText>
+
+                  <PrimaryButton onClick={() => submit(challenge.proof === "photo" ? "ai" : "friend")} className="w-full">
+                    {challenge.proof === "photo" ? "Check my photo" : "Send to friend to confirm"}
+                  </PrimaryButton>
+                </>
+              )}
+            </div>
           </div>
-        )}
 
-        {step === "form" && (
-          <>
-            <section>
-              <h2 className="font-semibold mb-2">
-                {challenge.proof === "photo" ? "Photo proof" : "Photo (optional)"}
-              </h2>
-              <button
-                onClick={() => fileRef.current?.click()}
-                className="w-full aspect-[4/3] rounded-2xl border-2 border-dashed border-neutral-700 bg-neutral-900 overflow-hidden flex items-center justify-center"
-              >
-                {preview ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={preview} alt="Your photo" className="w-full h-full object-cover" />
+          {/* Quest summary */}
+          <aside className="panel-3d p-6">
+            <p className="font-mono text-xs uppercase tracking-[.18em]">
+              {missionId ? "AI mission" : `${challenge.type} quest`} · +{challenge.points} pts
+            </p>
+            <h2 className="display-title font-display mt-3 text-4xl">
+              {challenge.emoji} <AccentTitle text={challenge.title} />
+            </h2>
+            <p className="mt-4 text-sm leading-6">{challenge.description}</p>
+
+            <div className="mt-6 flex items-center gap-3 rounded-2xl border-2 border-black bg-progress px-4 py-3 shadow-[3px_3px_0_#000]">
+              <Icon name="clock" className="h-5 w-5" />
+              <span className="text-sm font-bold">
+                {missionId ? (
+                  dueAt ? (
+                    <>
+                      Time left: <Countdown to={dueAt} expiredText="expired" />
+                    </>
+                  ) : (
+                    "No deadline"
+                  )
                 ) : (
-                  <span className="text-neutral-400">📷 Tap to take a photo</span>
+                  <>
+                    Ends in <Countdown to={nextMidnight()} expiredText="any second now" />
+                  </>
                 )}
-              </button>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={pickPhoto}
-                className="hidden"
-              />
-              <p className="text-xs text-neutral-500 mt-2">Places and things, please. No strangers' faces.</p>
-            </section>
+              </span>
+            </div>
 
-            <section>
-              <h2 className="font-semibold mb-2">How did it go?</h2>
-              <textarea
-                value={reflection}
-                onChange={(e) => setReflection(e.target.value.slice(0, 200))}
-                placeholder="One sentence. The barista recommended a lavender latte and it was amazing."
-                rows={2}
-                className={`${input} resize-none`}
-              />
-              <p className="text-xs text-neutral-500 mt-1">
-                SideQuest uses what you both write to plan your next quest.
+            <div className="mt-5 rounded-2xl border-2 border-black bg-success p-4">
+              <p className="text-xs font-bold uppercase tracking-[.14em]">How points work</p>
+              <p className="mt-2 text-xs leading-5">
+                Earn the quest&apos;s points when it&apos;s verified, plus +{DUO_BONUS} when a friend confirms you did it together. Max {WEEKLY_CAP} points a week.
               </p>
-            </section>
-
-            {friendPicker(
-              challenge.proof === "partner"
-                ? "Who can confirm you did it?"
-                : `Did it with a friend? (+${DUO_BONUS} duo bonus when they confirm)`
-            )}
-
-            {error && <p className="text-red-400 text-sm">{error}</p>}
-
-            <button
-              onClick={() => submit(challenge.proof === "photo" ? "ai" : "friend")}
-              className="w-full rounded-xl bg-emerald-500 text-black font-semibold py-3"
-            >
-              {challenge.proof === "photo" ? "Check my photo 🤖" : "Send to friend to confirm 🤝"}
-            </button>
-          </>
-        )}
-      </div>
-    </main>
+            </div>
+          </aside>
+        </div>
+      </section>
+    </AppShell>
   );
 }

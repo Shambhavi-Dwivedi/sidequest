@@ -1,12 +1,25 @@
 "use client";
 
-import { useEffect, useRef, useState, ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
 import Link from "next/link";
+import { supabase } from "@/lib/supabase";
+import { weekStart, WEEKLY_CAP } from "@/lib/points";
+import {
+  AppShell,
+  Avatar,
+  ErrorText,
+  FieldLabel,
+  Icon,
+  LoadingScreen,
+  PrimaryButton,
+  PrimaryLink,
+  ScreenHeading,
+  inputClass,
+  secondaryButtonClass,
+} from "@/components/ui";
 
-
-type Member = { id: string; name: string; avatar_url: string | null };
+type Member = { id: string; name: string; avatar_url: string | null; points: number };
 type Circle = { id: string; name: string; invite_code: string };
 
 function makeCode() {
@@ -14,20 +27,7 @@ function makeCode() {
   return Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
 }
 
-function Avatar({ url, name, size = 48 }: { url: string | null; name: string; size?: number }) {
-  return url ? (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={url} alt={name} style={{ width: size, height: size }} className="rounded-full object-cover" />
-  ) : (
-    <div
-      style={{ width: size, height: size }}
-      className="rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold"
-    >
-      {name.charAt(0).toUpperCase()}
-    </div>
-  );
-}
-
+// Figma: StreaksScreen (circle) + DebriefScreen (weekly standings)
 export default function FriendsPage() {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -64,17 +64,25 @@ export default function FriendsPage() {
       .single();
     setCircle(c);
 
-    const { data: rows } = await supabase
-      .from("circle_members")
-      .select("user_id")
-      .eq("circle_id", membership.circle_id);
+    const { data: rows } = await supabase.from("circle_members").select("user_id").eq("circle_id", membership.circle_id);
     const ids = (rows ?? []).map((r) => r.user_id);
 
-    const { data: people } = await supabase
-      .from("profiles")
-      .select("id, name, avatar_url")
-      .in("id", ids);
-    setMembers(people ?? []);
+    const { data: people } = await supabase.from("profiles").select("id, name, avatar_url").in("id", ids);
+
+    // Weekly standings: points earned since Monday
+    const { data: scores } = await supabase
+      .from("check_ins")
+      .select("user_id, points")
+      .in("user_id", ids)
+      .gte("challenge_date", weekStart());
+    const totals = new Map<string, number>();
+    (scores ?? []).forEach((s) => totals.set(s.user_id, (totals.get(s.user_id) ?? 0) + (s.points ?? 0)));
+
+    setMembers(
+      (people ?? [])
+        .map((p) => ({ ...p, points: totals.get(p.id) ?? 0 }))
+        .sort((a, b) => b.points - a.points)
+    );
   }
 
   async function joinByCode(code: string, uid: string) {
@@ -99,11 +107,7 @@ export default function FriendsPage() {
       const uid = auth.user.id;
       setUserId(uid);
 
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("name, avatar_url")
-        .eq("id", uid)
-        .maybeSingle();
+      const { data: profile } = await supabase.from("profiles").select("name, avatar_url").eq("id", uid).maybeSingle();
       if (!profile) return router.replace("/onboarding");
       setName(profile.name);
       setAvatar(profile.avatar_url);
@@ -145,6 +149,7 @@ export default function FriendsPage() {
     await supabase.from("profiles").update({ avatar_url: url }).eq("id", userId);
     setAvatar(url);
     setUploading(false);
+    if (circle) await loadCircle(userId);
   }
 
   async function createCircle() {
@@ -163,146 +168,226 @@ export default function FriendsPage() {
     await loadCircle(userId);
   }
 
-  const inviteLink = circle && typeof window !== "undefined"
-    ? `${window.location.origin}/join/${circle.invite_code}`
-    : "";
-
+  const inviteLink = circle && typeof window !== "undefined" ? `${window.location.origin}/join/${circle.invite_code}` : "";
   const inviteMessage = circle
-    ? `Join my SideQuest circle "${circle.name}"! We'll do small real-life challenges together. ${inviteLink}`
+    ? `Join my ConQuest circle "${circle.name}"! We'll do small real-life quests together. ${inviteLink}`
     : "";
 
   async function share() {
+    // 1. Phone share sheet (works on phones and Safari)
     if (navigator.share) {
       try {
-        await navigator.share({ title: "Join my SideQuest circle", text: inviteMessage });
+        await navigator.share({ title: "Join my ConQuest circle", text: inviteMessage });
         return;
-      } catch {}
+      } catch {
+        // share sheet closed or blocked, so fall back to copying
+      }
     }
-    await navigator.clipboard.writeText(inviteLink);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    // 2. Copy to clipboard
+    try {
+      await navigator.clipboard.writeText(inviteLink);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("Couldn't copy automatically. Tap the link box and copy it.");
+    }
   }
 
-  const emailHref = `mailto:?subject=${encodeURIComponent("Join my SideQuest circle")}&body=${encodeURIComponent(inviteMessage)}`;
+  const emailHref = `mailto:?subject=${encodeURIComponent("Join my ConQuest circle")}&body=${encodeURIComponent(inviteMessage)}`;
+  const gmailHref = `https://mail.google.com/mail/?view=cm&fs=1&su=${encodeURIComponent("Join my ConQuest circle")}&body=${encodeURIComponent(inviteMessage)}`;
 
-  const input =
-    "w-full rounded-xl bg-neutral-900 border border-neutral-800 px-4 py-3 outline-none focus:border-emerald-500";
-
-  if (loading) {
-    return (
-      <main className="min-h-screen bg-neutral-950 text-white flex items-center justify-center">
-        <p className="text-neutral-400">Loading…</p>
-      </main>
-    );
-  }
+  if (loading) return <LoadingScreen theme="theme-friends" />;
 
   return (
-    <main className="min-h-screen bg-neutral-950 text-white px-6 py-10">
-      <div className="max-w-md mx-auto space-y-8">
-        <div>
-          <h1 className="text-3xl font-bold">Find your people</h1>
-          <p className="text-neutral-400 mt-1">SideQuest is better with friends.</p>
-        </div>
+    <AppShell theme="theme-friends">
+      <section className="mx-auto max-w-[1000px]">
+        <ScreenHeading
+          number="02"
+          eyebrow="Your crew"
+          title="Streaks and friend circles"
+          copy="Make a circle for your crew, invite your IRL friends, and see who's leading this week."
+        />
 
-        {/* Profile picture */}
-        <section className="flex items-center gap-4">
-          <button onClick={() => fileRef.current?.click()} className="relative">
+        {/* Profile photo */}
+        <div className="panel-3d mt-8 flex flex-col gap-5 p-6 sm:flex-row sm:items-center">
+          <button type="button" onClick={() => fileRef.current?.click()} className="relative self-start" aria-label="Change photo">
             <Avatar url={avatar} name={name} size={80} />
-            <span className="absolute -bottom-1 -right-1 bg-emerald-500 text-black text-xs font-bold rounded-full w-7 h-7 flex items-center justify-center">
-              +
+            <span className="absolute -bottom-1 -right-1 grid h-8 w-8 place-items-center rounded-full border-2 border-black bg-progress">
+              <Icon name="camera" className="h-4 w-4" />
             </span>
           </button>
-          <div>
-            <p className="font-semibold">{name}</p>
-            <button onClick={() => fileRef.current?.click()} className="text-sm text-emerald-400">
-              {uploading ? "Uploading…" : avatar ? "Change photo" : "Add a profile photo"}
-            </button>
+          <div className="flex-1">
+            <h2 className="font-display text-2xl font-bold">{name}</h2>
+            <p className="mt-1 text-sm text-black">{avatar ? "Looking good." : "Add a photo so friends recognize you."}</p>
           </div>
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="self-start rounded-full border-2 border-black bg-progress px-5 py-3 text-xs font-bold shadow-[3px_3px_0_#000] sm:self-auto"
+          >
+            {uploading ? "Uploading…" : avatar ? "Change photo" : "Add a photo"}
+          </button>
           <input ref={fileRef} type="file" accept="image/*" onChange={uploadAvatar} className="hidden" />
-        </section>
+        </div>
 
-        {/* Circle */}
         {circle ? (
-          <section className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-bold">{circle.name}</h2>
-              <span className="text-xs text-neutral-400">{members.length} member{members.length === 1 ? "" : "s"}</span>
-            </div>
-
-            <div className="flex flex-wrap gap-3">
-              {members.map((m) => (
-                <div key={m.id} className="flex flex-col items-center gap-1 w-14">
-                  <Avatar url={m.avatar_url} name={m.name} />
-                  <span className="text-xs text-neutral-300 truncate w-full text-center">{m.name}</span>
+          <div className="mt-6 grid gap-6 lg:grid-cols-[1.15fr_.85fr]">
+            {/* Circle + invites */}
+            <div className="rounded-[36px] border-2 border-black bg-community p-6 text-white shadow-[4px_4px_0_#000] sm:p-7">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="font-mono text-xs font-bold uppercase tracking-[.16em] text-white">Your circle</p>
+                  <p className="raised-type-light font-display mt-2 text-3xl text-white">{circle.name}</p>
                 </div>
-              ))}
-            </div>
+                <span className="rounded-full border-2 border-black bg-progress px-3 py-2 text-xs font-bold text-black">
+                  {members.length} member{members.length === 1 ? "" : "s"}
+                </span>
+              </div>
 
-            <div className="rounded-xl bg-neutral-950 border border-neutral-800 p-3">
-              <p className="text-xs text-neutral-500">Invite code</p>
-              <p className="text-2xl font-mono font-bold tracking-widest">{circle.invite_code}</p>
-            </div>
+              <div className="mt-5 flex flex-wrap gap-4">
+                {members.map((m) => (
+                  <div key={m.id} className="flex w-16 flex-col items-center gap-1.5">
+                    <Avatar url={m.avatar_url} name={m.name} size={52} />
+                    <span className="w-full truncate text-center text-xs font-bold text-white">{m.name}</span>
+                  </div>
+                ))}
+              </div>
 
-            <div className="flex gap-2">
-              <button onClick={share} className="flex-1 rounded-xl bg-emerald-500 text-black font-semibold py-3">
-                {copied ? "Link copied!" : "Share invite link"}
-              </button>
-              <a href={emailHref} className="flex-1 rounded-xl bg-neutral-800 font-semibold py-3 text-center">
-                Email invite
-              </a>
-            </div>
-          </section>
-        ) : (
-          <section className="space-y-6">
-            <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5 space-y-3">
-              <h2 className="font-semibold">Start a circle</h2>
+              <p className="mt-6 text-sm leading-6 text-white">Invite friends with this code:</p>
+              <div className="mt-2 flex items-center justify-between rounded-2xl border-2 border-black bg-progress px-4 py-3 text-black shadow-[3px_3px_0_#000]">
+                <span className="font-mono text-2xl font-bold tracking-[.2em]">{circle.invite_code}</span>
+                <Icon name="people" className="h-5 w-5" />
+              </div>
+
               <input
-                value={circleName}
-                onChange={(e) => setCircleName(e.target.value)}
-                placeholder="e.g. Roommates, Soccer crew"
-                className={input}
+                readOnly
+                value={inviteLink}
+                onFocus={(e) => e.target.select()}
+                aria-label="Invite link"
+                className="mt-4 w-full rounded-xl border-2 border-black bg-white px-4 py-3 font-mono text-xs text-black"
               />
-              <button onClick={createCircle} className="w-full rounded-xl bg-emerald-500 text-black font-semibold py-3">
+
+              <div className="mt-4 grid gap-3">
+                <PrimaryButton onClick={share} arrow={false} className="w-full">
+                  <Icon name={copied ? "check" : "copy"} className="h-4 w-4" />
+                  {copied ? "Link copied!" : "Share invite link"}
+                </PrimaryButton>
+                <div className="grid grid-cols-2 gap-3">
+                  <a href={gmailHref} target="_blank" rel="noopener noreferrer" className={secondaryButtonClass}>
+                    <Icon name="mail" className="h-4 w-4" />
+                    Gmail
+                  </a>
+                  <a href={emailHref} className={secondaryButtonClass}>
+                    <Icon name="mail" className="h-4 w-4" />
+                    Mail app
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            {/* Weekly standings */}
+            <aside className="panel-3d p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-mono text-xs uppercase tracking-[.18em] text-black">Weekly standings</p>
+                  <h3 className="font-display mt-1 text-2xl font-bold">{circle.name}</h3>
+                </div>
+                <span className="grid h-10 w-10 place-items-center rounded-full border-2 border-black bg-community text-white">
+                  <Icon name="shield" className="h-5 w-5" />
+                </span>
+              </div>
+              <div className="mt-6 space-y-1">
+                {members.map((m, i) => (
+                  <div
+                    key={m.id}
+                    className={`flex items-center gap-4 rounded-2xl border-2 px-4 py-3 ${
+                      m.id === userId ? "border-black bg-progress shadow-[3px_3px_0_#000]" : "border-transparent bg-white"
+                    }`}
+                  >
+                    <span className="font-mono text-xs text-black">{String(i + 1).padStart(2, "0")}</span>
+                    <Avatar url={m.avatar_url} name={m.name} size={32} />
+                    <span className="flex-1 truncate text-sm font-bold">
+                      {m.name}
+                      {i === 0 && m.points > 0 && " 👑"}
+                    </span>
+                    <span className="font-mono text-xs text-black">{m.points} pts</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-6 rounded-2xl border-2 border-black bg-success p-4">
+                <p className="text-xs font-bold uppercase tracking-[.14em] text-black">Circle reward</p>
+                <p className="mt-2 text-xs leading-5 text-black">
+                  Whoever leads on Sunday night picks next week&apos;s group hangout. Everyone can earn up to {WEEKLY_CAP} points a week.
+                </p>
+              </div>
+            </aside>
+          </div>
+        ) : (
+          <div className="mt-6 grid gap-6 lg:grid-cols-2">
+            <div className="panel-3d rounded-[36px] p-6">
+              <p className="font-mono text-xs font-bold uppercase tracking-[.16em]">Make a friend circle</p>
+              <p className="raised-type font-display mt-2 text-2xl">Quest together</p>
+              <p className="mt-2 text-sm leading-6 text-black">Name your circle, then share the invite code with your friends.</p>
+              <label className="mt-5 block">
+                <FieldLabel>Circle name</FieldLabel>
+                <input
+                  value={circleName}
+                  onChange={(e) => setCircleName(e.target.value)}
+                  placeholder="e.g. Weekend Wanderers"
+                  className={inputClass}
+                />
+              </label>
+              <button type="button" onClick={createCircle} className="quest-button mt-4 w-full px-5 py-3 text-sm font-bold">
                 Create circle
               </button>
             </div>
 
-            <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-5 space-y-3">
-              <h2 className="font-semibold">Have an invite code?</h2>
+            <div className="panel-3d rounded-[36px] p-6">
+              <div className="flex items-center gap-4">
+                <span className="grid h-11 w-11 place-items-center rounded-full border-2 border-black bg-discovery">
+                  <Icon name="code" />
+                </span>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[.12em]">Have a circle code?</p>
+                  <p className="mt-1 text-xs text-black">Ask a friend to share their six-character code.</p>
+                </div>
+              </div>
               <input
+                aria-label="Circle code"
                 value={joinCode}
                 onChange={(e) => setJoinCode(e.target.value)}
-                placeholder="ABC123"
-                className={`${input} uppercase tracking-widest`}
+                placeholder="HXJR5C"
+                className="mt-5 w-full rounded-xl border-2 border-black bg-white px-4 py-3 font-mono text-sm uppercase tracking-[.18em] text-black outline-none focus:shadow-[4px_4px_0_#2A9DBB]"
               />
-              <button
-                onClick={() => userId && joinByCode(joinCode, userId)}
-                className="w-full rounded-xl bg-neutral-800 font-semibold py-3"
-              >
+              <button type="button" onClick={() => userId && joinByCode(joinCode, userId)} className={`${secondaryButtonClass} mt-4 w-full`}>
                 Join circle
               </button>
             </div>
-          </section>
+          </div>
         )}
 
-                <   
-                    Link
+        <div className="mt-6">
+          <ErrorText>{error}</ErrorText>
+        </div>
+
+        <Link
           href="/discover"
-          className="block rounded-2xl border border-neutral-800 bg-neutral-900 p-5 hover:border-emerald-500 transition"
+          className="mt-6 flex items-center gap-4 rounded-[28px] border-2 border-black bg-white p-5 shadow-[4px_4px_0_#000] transition"
         >
-          <p className="font-semibold">🌍 Discover SideQuesters</p>
-          <p className="text-sm text-neutral-400">Meet people who share your interests, near you or anywhere.</p>
+          <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full border-2 border-black bg-discovery">
+            <Icon name="pin" className="h-6 w-6" />
+          </span>
+          <span className="flex-1">
+            <span className="block font-display text-lg font-bold">Discover ConQuesters</span>
+            <span className="block text-sm text-black">Meet people who share your interests, near you or anywhere.</span>
+          </span>
+          <Icon name="chevron" className="h-5 w-5" />
         </Link>
 
-        {error && <p className="text-red-400 text-sm">{error}</p>}
-
-        <button
-          onClick={() => router.push("/home")}
-          className="w-full rounded-xl border border-neutral-700 font-semibold py-3"
-        >
-          {circle ? "Continue →" : "Skip for now →"}
-        </button>
-      </div>
-    </main>
+        <div className="mt-7 flex justify-end">
+          <PrimaryLink href="/home">{circle ? "Show my quest" : "Skip for now"}</PrimaryLink>
+        </div>
+      </section>
+    </AppShell>
   );
 }

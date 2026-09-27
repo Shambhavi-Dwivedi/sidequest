@@ -87,7 +87,7 @@ export async function POST(req: Request) {
   try {
     const { text } = await askAI({
       instructions:
-        "You are SideQuest's mission planner. SideQuest helps friends turn 'we should hang out' into real, in-person plans. " +
+        "You are ConQuest's mission planner. ConQuest helps friends turn 'we should hang out' into real, in-person plans. " +
         "You design small missions for two specific friends to do together.",
       prompt: `Friend 1: ${describe(meP)}
 Friend 2: ${describe(them)}
@@ -146,7 +146,7 @@ Return JSON exactly like:
         emoji: c.emoji,
         title: c.title,
         description: c.description,
-        reason: `A SideQuest favorite for ${meP.name} and ${them.name}.`,
+        reason: `A ConQuest favorite for ${meP.name} and ${them.name}.`,
         difficulty: 1,
         points: c.points,
         proof: c.proof,
