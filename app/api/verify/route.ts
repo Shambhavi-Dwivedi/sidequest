@@ -1,5 +1,6 @@
 import { askAI, parseJSON } from "@/lib/ai";
 import { CHALLENGES } from "@/lib/challenges";
+import { createClient } from "@/lib/supabase-server";
 
 type AIVerdict = {
   verified: boolean;
@@ -9,11 +10,25 @@ type AIVerdict = {
 };
 
 export async function POST(req: Request) {
-  const { imageUrl, challengeId } = await req.json();
+  const { imageUrl, challengeId, missionId } = await req.json();
 
-  const challenge = CHALLENGES.find((c) => c.id === challengeId);
-  if (!challenge || !challenge.aiCheck) {
-    return Response.json({ error: "This challenge isn't photo-verified" }, { status: 400 });
+  // Figure out what the photo should show: a built-in challenge or an AI mission
+  let title: string | undefined;
+  let aiCheck: string | undefined;
+
+  if (missionId) {
+    const supabase = await createClient();
+    const { data: m } = await supabase.from("missions").select("title, ai_check").eq("id", missionId).maybeSingle();
+    title = m?.title;
+    aiCheck = m?.ai_check ?? undefined;
+  } else {
+    const c = CHALLENGES.find((x) => x.id === challengeId);
+    title = c?.title;
+    aiCheck = c?.aiCheck;
+  }
+
+  if (!title || !aiCheck) {
+    return Response.json({ error: "This quest isn't photo-verified" }, { status: 400 });
   }
 
   // Only check photos stored in our own Supabase, not random links from the internet
@@ -28,7 +43,7 @@ export async function POST(req: Request) {
         "You check photo proof for SideQuest, a friendly app where friends do small real-life challenges. " +
         "Be encouraging and fairly lenient. Judge only what is visible in the photo.",
       prompt:
-        `Challenge: "${challenge.title}". The photo should show: ${challenge.aiCheck}.\n` +
+        `Quest: "${title}". The photo should show: ${aiCheck}.\n` +
         'Return JSON exactly like: {"verified": true or false, "confidence": 0 to 1, ' +
         '"has_faces": true or false, "feedback": "one short, warm sentence to the user"}.\n' +
         "Set verified to true if the photo plausibly shows this. " +

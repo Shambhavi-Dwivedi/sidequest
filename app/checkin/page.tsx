@@ -6,15 +6,21 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { CHALLENGES, challengeOfTheDay, Challenge } from "@/lib/challenges";
 import { todayString, weeklyPoints, WEEKLY_CAP, DUO_BONUS } from "@/lib/points";
+import Countdown from "@/components/Countdown";
+import { nextMidnight } from "@/lib/time";
+
+
 
 type Friend = { id: string; name: string };
 type Verdict = { verified: boolean; feedback: string; hasFaces: boolean };
-type Step = "form" | "checking" | "retry" | "done";
+type Step = "loading" | "form" | "checking" | "retry" | "done";
 
 export default function CheckInPage() {
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [challenge, setChallenge] = useState<Challenge>(challengeOfTheDay());
+  const [dueAt, setDueAt] = useState<string | null>(null);
+  const [missionId, setMissionId] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [circleId, setCircleId] = useState<string | null>(null);
   const [friends, setFriends] = useState<Friend[]>([]);
@@ -22,7 +28,7 @@ export default function CheckInPage() {
   const [photo, setPhoto] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [reflection, setReflection] = useState("");
-  const [step, setStep] = useState<Step>("form");
+  const [step, setStep] = useState<Step>("loading");
   const [verdict, setVerdict] = useState<Verdict | null>(null);
   const [earned, setEarned] = useState(0);
   const [capped, setCapped] = useState(false);
@@ -32,36 +38,74 @@ export default function CheckInPage() {
 
   useEffect(() => {
     async function init() {
-      // Testing / demo: /checkin?c=cafe-swap picks a specific challenge
-      const override = new URLSearchParams(window.location.search).get("c");
-      const found = CHALLENGES.find((c) => c.id === override);
-      if (found) setChallenge(found);
-
       const { data: auth } = await supabase.auth.getUser();
       if (!auth.user) return router.replace("/login");
       const uid = auth.user.id;
       setUserId(uid);
 
-      // Circle friends (for confirming / duo bonus)
+      // Which quest? ?m=<mission id> for AI missions, ?c=<challenge id> for testing, otherwise today's challenge
+      const params = new URLSearchParams(window.location.search);
+      let current: Challenge = challengeOfTheDay();
+      let missionPartner: string | null = null;
+
+      const mId = params.get("m");
+      const cId = params.get("c");
+      if (mId) {
+        const { data: m } = await supabase
+          .from("missions")
+          .select("id, created_by, partner_id, emoji, title, description, points, proof, ai_check, due_at")
+          .eq("id", mId)
+          .maybeSingle();
+        if (m) {
+          current = {
+            id: `mission-${m.id}`,
+            emoji: m.emoji ?? "✨",
+            title: m.title,
+            description: m.description,
+            type: "duo",
+            points: m.points ?? 20,
+            proof: m.proof === "partner" ? "partner" : "photo",
+            aiCheck: m.ai_check ?? undefined,
+          };
+          setMissionId(m.id);
+          setDueAt(m.due_at ?? null);
+          missionPartner = m.created_by === uid ? m.partner_id : m.created_by;
+          setPartnerId(missionPartner ?? "");
+        }
+      } else if (cId) {
+        const found = CHALLENGES.find((c) => c.id === cId);
+        if (found) current = found;
+      }
+      setChallenge(current);
+
+      // Friends = circle members + accepted friend requests (+ your mission partner)
+      const ids = new Set<string>();
       const { data: membership } = await supabase
         .from("circle_members")
         .select("circle_id")
         .eq("user_id", uid)
         .limit(1)
         .maybeSingle();
-
       if (membership) {
         setCircleId(membership.circle_id);
         const { data: rows } = await supabase
           .from("circle_members")
           .select("user_id")
-          .eq("circle_id", membership.circle_id)
-          .neq("user_id", uid);
-        const ids = (rows ?? []).map((r) => r.user_id);
-        if (ids.length) {
-          const { data: people } = await supabase.from("profiles").select("id, name").in("id", ids);
-          setFriends(people ?? []);
-        }
+          .eq("circle_id", membership.circle_id);
+        (rows ?? []).forEach((r) => ids.add(r.user_id));
+      }
+      const { data: fs } = await supabase
+        .from("friendships")
+        .select("requester, addressee")
+        .eq("status", "accepted")
+        .or(`requester.eq.${uid},addressee.eq.${uid}`);
+      (fs ?? []).forEach((f) => ids.add(f.requester === uid ? f.addressee : f.requester));
+      if (missionPartner) ids.add(missionPartner);
+      ids.delete(uid);
+
+      if (ids.size) {
+        const { data: people } = await supabase.from("profiles").select("id, name").in("id", [...ids]);
+        setFriends(people ?? []);
       }
 
       const { data: existing } = await supabase
@@ -69,8 +113,11 @@ export default function CheckInPage() {
         .select("id")
         .eq("user_id", uid)
         .eq("challenge_date", todayString())
+        .eq("challenge_id", current.id)
         .maybeSingle();
       setAlreadyToday(!!existing);
+
+      setStep("form");
     }
     init();
   }, [router]);
@@ -93,9 +140,12 @@ export default function CheckInPage() {
     return supabase.storage.from("checkins").getPublicUrl(path).data.publicUrl;
   }
 
-  // mode "ai": the AI checks the photo. mode "friend": a circle friend confirms instead.
+  // mode "ai": the AI checks the photo. mode "friend": a friend confirms instead.
   async function submit(mode: "ai" | "friend") {
     if (!userId) return;
+        if (dueAt && new Date(dueAt).getTime() <= Date.now()) {
+      return setError("Time's up on this quest! Plan a new one with your friend.");
+    }
     if (mode === "ai" && !photo) return setError("Add a photo so the AI can check it");
     if (mode === "friend" && !partnerId) return setError("Pick the friend who can confirm");
     if (!reflection.trim()) return setError("Add one sentence about how it went");
@@ -111,7 +161,9 @@ export default function CheckInPage() {
         const res = await fetch("/api/verify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ imageUrl: photoUrl, challengeId: challenge.id }),
+          body: JSON.stringify(
+            missionId ? { imageUrl: photoUrl, missionId } : { imageUrl: photoUrl, challengeId: challenge.id }
+          ),
         });
         const data = await res.json();
 
@@ -142,6 +194,9 @@ export default function CheckInPage() {
           circle_id: circleId,
           challenge_id: challenge.id,
           challenge_date: todayString(),
+          title: challenge.title,
+          emoji: challenge.emoji,
+          max_points: challenge.points,
           photo_url: photoUrl,
           reflection: reflection.trim(),
           ai_verified: verified,
@@ -151,9 +206,13 @@ export default function CheckInPage() {
           status: verified ? "verified" : "pending",
           points,
         },
-        { onConflict: "user_id,challenge_date" }
+        { onConflict: "user_id,challenge_date,challenge_id" }
       );
       if (error) throw new Error(error.message);
+
+      if (missionId && verified) {
+        await supabase.from("missions").update({ status: "completed" }).eq("id", missionId);
+      }
 
       setEarned(points);
       setVerifiedNow(verified);
@@ -191,7 +250,7 @@ export default function CheckInPage() {
       </section>
     ) : (
       <p className="text-sm text-neutral-500">
-        Join a circle so friends can confirm your quests.{" "}
+        Add friends so they can confirm your quests.{" "}
         <Link href="/friends" className="text-emerald-400 underline">
           Find friends
         </Link>
@@ -199,6 +258,14 @@ export default function CheckInPage() {
     );
 
   // ---------- Screens ----------
+
+  if (step === "loading") {
+    return (
+      <main className="min-h-screen bg-neutral-950 text-white flex items-center justify-center">
+        <p className="text-neutral-400">Loading…</p>
+      </main>
+    );
+  }
 
   if (step === "checking") {
     return (
@@ -229,12 +296,16 @@ export default function CheckInPage() {
             <>
               <p className="text-6xl">⏳</p>
               <h1 className="text-2xl font-bold">Sent to {partnerName} to confirm</h1>
-              <p className="text-neutral-400">
-                You'll get +{challenge.points + DUO_BONUS} pts when they confirm.
-              </p>
+              <p className="text-neutral-400">You'll get +{challenge.points + DUO_BONUS} pts when they confirm.</p>
             </>
           )}
-          <Link href="/home" className="block rounded-xl bg-emerald-500 text-black font-semibold py-3">
+
+          {partnerName && (
+            <Link href="/missions" className="block rounded-xl bg-emerald-500 text-black font-semibold py-3">
+              ✨ Plan your next quest with {partnerName}
+            </Link>
+          )}
+          <Link href="/home" className="block rounded-xl border border-neutral-700 font-semibold py-3">
             Back home
           </Link>
         </div>
@@ -245,13 +316,13 @@ export default function CheckInPage() {
   return (
     <main className="min-h-screen bg-neutral-950 text-white px-6 py-10">
       <div className="max-w-md mx-auto space-y-6">
-        <Link href="/home" className="text-sm text-neutral-400 underline">
-          ← Home
+        <Link href={missionId ? "/missions" : "/home"} className="text-sm text-neutral-400 underline">
+          ← Back
         </Link>
 
         <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/5 p-5 space-y-2">
           <p className="text-xs uppercase tracking-wide text-emerald-400 font-semibold">
-            {challenge.type} · +{challenge.points} pts
+            {missionId ? "AI mission" : challenge.type} · +{challenge.points} pts
           </p>
           <h1 className="text-2xl font-bold">
             {challenge.emoji} {challenge.title}
@@ -260,10 +331,22 @@ export default function CheckInPage() {
           <p className="text-xs text-neutral-500">
             {challenge.proof === "photo" ? "🤖 Proof: AI checks your photo" : "🤝 Proof: a friend confirms"}
           </p>
+                    <p className="text-xs text-amber-300">
+            ⏱{" "}
+            {missionId ? (
+              dueAt ? (
+                <>Time left: <Countdown to={dueAt} expiredText="expired" /></>
+              ) : (
+                "No deadline"
+              )
+            ) : (
+              <>Ends in <Countdown to={nextMidnight()} expiredText="any second now" /></>
+            )}
+          </p>
         </div>
 
         {alreadyToday && (
-          <p className="text-sm text-amber-400">You already checked in today. Submitting again replaces it.</p>
+          <p className="text-sm text-amber-400">You already checked in for this today. Submitting again replaces it.</p>
         )}
 
         {/* AI said no, or the AI was unavailable */}
@@ -290,7 +373,6 @@ export default function CheckInPage() {
 
         {step === "form" && (
           <>
-            {/* Photo */}
             <section>
               <h2 className="font-semibold mb-2">
                 {challenge.proof === "photo" ? "Photo proof" : "Photo (optional)"}
@@ -317,7 +399,6 @@ export default function CheckInPage() {
               <p className="text-xs text-neutral-500 mt-2">Places and things, please. No strangers' faces.</p>
             </section>
 
-            {/* Reflection */}
             <section>
               <h2 className="font-semibold mb-2">How did it go?</h2>
               <textarea
@@ -327,6 +408,9 @@ export default function CheckInPage() {
                 rows={2}
                 className={`${input} resize-none`}
               />
+              <p className="text-xs text-neutral-500 mt-1">
+                SideQuest uses what you both write to plan your next quest.
+              </p>
             </section>
 
             {friendPicker(
